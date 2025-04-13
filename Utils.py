@@ -1,68 +1,62 @@
-import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import math
+from sklearn.utils import shuffle
 
 
 class Bootstrap:
-    def __init__(self, filename):
-        self.shape = None
-        self.filename = filename
-        self.dataset = np.genfromtxt(self.filename, delimiter=',')
+    def __init__(self, dataset):
+        self.dataset = np.array(dataset)
     
-    def sampling(self):
-        return np.random.Generator.choice(self.dataset, size=self.shape, replace=True)
+    def sample(self):
+        print(self.dataset.shape)
+        rng = np.random.default_rng()
+        indices = rng.choice(self.dataset.shape[0], size=self.dataset.shape[0], replace=True)
+        return self.dataset[indices]
+
+class StratifiedValidation:
+    def __init__(self, dataset, k=5):
+        self.dataset = dataset
+        self.pos = np.where(dataset["label"] == 1)[0]
+        self.neg = np.where(dataset["label"] == 0)[0]
+        self.k = k
     
-class Performance:
-    def __init__(self, pos, neg):
-        self.pos = pos
-        self.neg = neg
-        self.df = None
-        self.df_confusion = None
-    
-    def create_eval_df(self):
-        df_pos = pd.DataFrame({"doc": self.pos, "actual": "P"})
-        df_neg = pd.DataFrame({"doc": self.neg, "actual": "N"})
-        self.df = pd.concat([df_pos, df_neg])
-        return
-    
-    def add_prediction(self, predicts):
-        self.df["predicted"] = predicts
+    def kfold_split(self):
+        pos_indices = np.random.permutation(self.pos)
+        neg_indices = np.random.permutation(self.neg)
+
+        pos_folds = np.array_split(pos_indices, self.k)
+        neg_folds = np.array_split(neg_indices, self.k)
+
+        folds = []
+        for i in range(self.k):
+            fold_indices = np.concatenate((pos_folds[i], neg_folds[i]))
+            fold_indices = np.random.permutation(fold_indices)
+            folds.append(self.dataset[fold_indices])
         
-    def reset_prediction(self):
-        self.df.drop(columns=["predicted"], inplace=True)
-    
-    #df_predict: 2 columns: doc, predict_class (2 classes P, N)
-    def get_confusion(self):
-        self.df_confusion = pd.crosstab(self.df["actual"], self.df["predicted"], rownames=["Actual"], colnames=["Predicted"], margins=True)
-        # print(self.df_confusion)
+        return folds
+
+class Performance:
+    def __init__(self, y=None, preds=None):
+        self.y = np.array(y)
+        self.preds = np.array(preds)
+        self.precision = -1
+        self.recall = -1
     
     def get_accuracy(self):
-        return (self.df_confusion.loc["P", "P"] + self.df_confusion.loc["N", "N"])/self.df_confusion.loc["All", "All"]
+        return np.sum(self.preds == self.y.to_numpy())/self.y.shape[0]
     
     def get_precision(self):
-        return self.df_confusion.loc["P", "P"]/(self.df_confusion.loc["P", "P"] + self.df_confusion.loc["N", "P"])
+        _, preds_counts = np.unique(self.preds, return_counts=True)
+        tp = np.sum(np.logical_and(self.y == 1, self.preds == 1))
+        self.precision = tp / preds_counts[1]
+        return self.precision
     
     def get_recall(self):
-        return self.df_confusion.loc["P", "P"]/(self.df_confusion.loc["P", "P"] + self.df_confusion.loc["P", "N"])
+        _, actual_counts = np.unique(self.y, return_counts=True)
+        tp = np.sum(np.logical_and(self.y == 1, self.preds == 1))
+        self.recall = tp / actual_counts[1]
+        return self.recall
     
-    def plot_confusion_matrix(self, title='confusion_matrix', cmap=plt.cm.get_cmap("viridis_r")):
-        plt.matshow(self.df_confusion, cmap=cmap) # imshow
-        #plt.title(title)
-        plt.colorbar()
-        tick_marks = np.arange(len(self.df_confusion.columns))
-        plt.xticks(tick_marks, self.df_confusion.columns, rotation=45)
-        plt.yticks(tick_marks, self.df_confusion.index)
-        #plt.tight_layout()
-        plt.ylabel(self.df_confusion.index.name)
-        plt.xlabel(self.df_confusion.columns.name)
-        plt.savefig(title + ".png")
-
-def plot_graph(x, y, filename):
-    plt.figure(figsize=(10, 6))
-    plt.semilogx(x, y, marker='o', linestyle='-', color='b')
-    plt.title("Model Accuracy vs. Alpha (Laplace Smoothing)")
-    plt.xlabel("Alpha (log scale)")
-    plt.ylabel("Accuracy on Test Set")
-    plt.grid(True, which="both", ls="--")
-    plt.savefig(filename + ".png")
-    plt.show()                
+    def get_f1(self):
+        return 2*((self.precision * self.recall)/(self.precision + self.recall))
