@@ -1,11 +1,13 @@
+import math
 import numpy as np
 from Utils import Bootstrap, StratifiedValidation, Performance
 
 class Node:
-    def __init__(self, ft_split=None, data=None, isLeaf=False):
+    def __init__(self, ft_split=None, data=None, isLeaf=False, threshold=None):
         self.id = id(self)
         self.ft_split = ft_split
         self.data = data
+        self.threshold = threshold
         self.isLeaf = isLeaf
 
 class Graph:
@@ -39,7 +41,7 @@ class DecisionTree:
     def __init__(self, dataset):
         self.dtree = Graph()
         self.dataset = dataset
-        self.m = np.sqrt(self.dataset.shape[1])
+        self.num_atts = len(self.dataset.dtype.names) - 1
         self.label_name = "label"
         
     def count_majority(self, dataset):
@@ -87,48 +89,127 @@ class DecisionTree:
         return parent_entropy - weighted_children_entropy
     
     def get_att_list(self):
-        col_indices = np.random.choice(self.dataset.dtype.names, size=self.m, replace=False)
+        col_indices = np.random.choice(self.num_atts, size=math.floor(np.sqrt(self.num_atts)), replace=False)
         return col_indices
+    
+    def check_stop(self, split_dataset, n):
+        # All samples same class
+        if np.all(split_dataset[self.label_name] == 1) or np.all(split_dataset[self.label_name] == 0):
+            return True
+        # Too few samples
+        if split_dataset.shape[0] < n:
+            return True
+        return False
+    
+    def create_leaf_node(self, split_dataset, node):
+        node.isLeaf = True
+        if np.all(split_dataset[self.label_name] == 1) or np.all(split_dataset[self.label_name] == 0):
+            node.data = split_dataset[self.label_name]
+        else:
+            node.data = self.count_majority(split_dataset)
+        return node
+    
+    def find_best_infogain(self, split_dataset):
+        att_list = np.array(self.dataset.dtype.names)[self.get_att_list()]
+        max_info_gain = 0
+        best_attr = ""
+        is_categorical = False
+        
+        for attribute in att_list:
+            current_is_categorical = attribute[-3:] == "cat"
+            class_count_arr = self.count_class(split_dataset, attribute, current_is_categorical)
+            att_info_gain = self.info_gain(class_count_arr)
+            
+            if att_info_gain > max_info_gain:
+                max_info_gain = att_info_gain
+                best_attr = attribute
+                is_categorical = current_is_categorical
+        
+        return best_attr, is_categorical
+    
+    def process_child_node(self, split_dataset, n, parent_node, row_part, edge_value, threshold=None):
+        child_node = Node()
+        self.dtree.create_node(child_node.id)
+        
+        if row_part.shape[0] == 0:
+            child_node.data = self.count_majority(split_dataset)
+            child_node.isLeaf = True
+            if threshold:
+                child_node.threshold = threshold
+        else:
+            child_node = self.create_decision_tree(row_part, n)
+        self.dtree.add_edge(parent_node, child_node, edge_value)
+    
+    def handle_categorical_split(self, split_dataset, n, parent_node, max_gain_att):
+        values_list = np.unique(split_dataset[max_gain_att])
+        for value in values_list:
+            row_part = split_dataset[np.where(split_dataset[max_gain_att] == value)]
+            self.process_child_node(split_dataset, n, parent_node, row_part, str(value))
+    
+    def handle_numerical_split(self, split_dataset, n, parent_node, max_gain_att):
+        threshold = np.average(split_dataset[max_gain_att])
+        lower_part = split_dataset[split_dataset[max_gain_att] <= threshold]
+        upper_part = split_dataset[split_dataset[max_gain_att] > threshold]
+        
+        self.process_child_node(split_dataset, n, parent_node, lower_part, f"<={threshold:.2f}", threshold)
+        self.process_child_node(split_dataset, n, parent_node, upper_part, f">{threshold:.2f}", threshold)
+        
     
     def create_decision_tree(self, split_dataset, n):
         new_node = Node()
         self.dtree.create_node(new_node.id)
-        #stop criteria
-        if np.all(split_dataset[self.label_name] == 1) or np.all(split_dataset[self.label_name] == 0):
+        # #stop criteria
+        # if np.all(split_dataset[self.label_name] == 1) or np.all(split_dataset[self.label_name] == 0):
+        #     new_node.isLeaf = True
+        #     new_node.data = split_dataset[self.label_name]
+        #     return new_node
+        # if split_dataset.shape[0] < n:
+        #     new_node.isLeaf = True
+        #     new_node.data = self.count_majority(split_dataset)
+        #     return new_node
+        if self.check_stop(split_dataset, n) == True:
             new_node.isLeaf = True
-            new_node.data = split_dataset[0, self.label_name]
-            return new_node
-        if split_dataset.shape[0] < n:
-            new_node.isLeaf = True
-            new_node.data = self.count_majority(split_dataset)
+            if np.all(split_dataset[self.label_name] == 1) or np.all(split_dataset[self.label_name] == 0):
+                new_node.data = split_dataset[self.label_name]
+            else:
+                new_node.data = self.count_majority(split_dataset)
             return new_node
         #get most info gain attribute in randomly chosen m=sqrt(# attributes)
-        att_list = self.get_att_list()
-        max_info_gain = 0
-        max_gain_att = ""
-        for attribute in att_list:
-            isCategorical = split_dataset[attribute].dtype != np.dtype("float") or split_dataset[attribute].dtype != np.dtype("int")
-            class_count_arr = self.count_class(split_dataset, attribute, isCategorical)
-            att_info_gain = self.info_gain(class_count_arr)
-            if att_info_gain > max_info_gain:
-                max_info_gain = att_info_gain
-                max_gain_att = attribute
+        # att_list = np.array(self.dataset.dtype.names)[self.get_att_list()]
+        # max_info_gain = 0
+        # max_gain_att = ""
+        # isCategorical = False
+        # for attribute in att_list:
+        #     isCategorical = attribute[-3:] == "cat"
+        #     class_count_arr = self.count_class(split_dataset, attribute, isCategorical)
+        #     att_info_gain = self.info_gain(class_count_arr)
+        #     if att_info_gain > max_info_gain:
+        #         max_info_gain = att_info_gain
+        #         max_gain_att = attribute
+        max_gain_att, isCategorical = self.find_best_infogain(split_dataset)
         new_node.ft_split = max_gain_att
         new_node.isLeaf = False
         # create a branch for each value of the split node
-        values_list = np.unique(split_dataset[max_gain_att])
-        for value in values_list:
-            row_part = split_dataset[np.where(split_dataset[max_gain_att] == value)]
-            #TODO: refactor create_node fn
-            new_child_node = Node()
-            self.dtree.create_node(new_child_node.id)
-            # if data partition is empty
-            if row_part.shape[0] == 0:
-                new_child_node.data = self.count_majority(split_dataset)
-                new_child_node.isLeaf = True
-            else:
-                new_child_node = self.train_decision_tree(row_part, n)
-            self.dtree.add_edge(new_node, new_child_node, str(value))
+        if isCategorical:
+            # values_list = np.unique(split_dataset[max_gain_att])
+            # for value in values_list:
+            #     row_part = split_dataset[np.where(split_dataset[max_gain_att] == value)]
+            #     #TODO: refactor create_node fn
+            #     new_child_node = Node()
+            #     self.dtree.create_node(new_child_node.id)
+            #     # if data partition is empty
+            #     if row_part.shape[0] == 0:
+            #         new_child_node.data = self.count_majority(split_dataset)
+            #         new_child_node.isLeaf = True
+            #     else:
+            #         new_child_node = self.create_decision_tree(row_part, n)
+            #     self.dtree.add_edge(new_node, new_child_node, str(value))
+            self.handle_categorical_split(split_dataset, n, new_node, max_gain_att)
+        else:
+            # threshold = np.average(split_dataset[max_gain_att])
+            # lower_part = split_dataset[split_dataset[max_gain_att] <= threshold]
+            # upper_part = split_dataset[split_dataset[max_gain_att] > threshold]
+            self.handle_numerical_split(split_dataset, n, new_node, max_gain_att)
         return new_node
     
     def train_decision_tree(self):
@@ -139,7 +220,11 @@ class DecisionTree:
     def predict(self, drow):
         curr_node = self.dtree.root
         while not curr_node.isLeaf:
-            branch = drow[curr_node.ft_split]
+            # ft = str(curr_node.ft_split)
+            isCategorical = curr_node.ft_split[-3:] == "cat"
+            branch = drow[str(curr_node.ft_split)]
+            if not isCategorical:
+                branch = f"<={curr_node.threshold:.2f}" if branch <= curr_node.threshold else f">{curr_node.threshold:.2f}"
             curr_node = self.dtree.get_next_node(curr_node.id, branch)
         return curr_node.data
         
@@ -164,16 +249,23 @@ class RandomForest:
             self.dtrees.append(dtree)
     
     def predict(self, eval_data):
-        it = np.nditer(eval_data)
+        # it = np.nditer(eval_data)
         all_predictions = []
-        with it:
-            while not it.finished:
-                results = []
-                for dtree in self.dtrees:
-                    res = dtree.predict(it)
-                    results.append(res)
-                final_res = self.get_final_result(results)
-                all_predictions.append(final_res)
+        # with it:
+        #     while not it.finished:
+        #         results = []
+        #         for dtree in self.dtrees:
+        #             res = dtree.predict(it)
+        #             results.append(res)
+        #         final_res = self.get_final_result(results)
+        #         all_predictions.append(final_res)
+        for row in eval_data:
+            results = []
+            for dtree in self.dtrees:
+                res = dtree.predict(row)
+                results.append(res)
+            final_res = self.get_final_result(results)
+            all_predictions.append(final_res)
         return all_predictions                
             
             
