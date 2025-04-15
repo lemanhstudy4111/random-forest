@@ -9,7 +9,6 @@ class Bootstrap:
         self.dataset = np.array(dataset)
     
     def sample(self):
-        print(self.dataset.shape)
         rng = np.random.default_rng()
         indices = rng.choice(self.dataset.shape[0], size=self.dataset.shape[0], replace=True)
         return self.dataset[indices]
@@ -22,8 +21,9 @@ class StratifiedValidation:
         self.k = k
     
     def kfold_split(self):
-        pos_indices = np.random.permutation(self.pos)
-        neg_indices = np.random.permutation(self.neg)
+        rng = np.random.default_rng()
+        pos_indices = rng.permutation(self.pos)
+        neg_indices = rng.permutation(self.neg)
 
         pos_folds = np.array_split(pos_indices, self.k)
         neg_folds = np.array_split(neg_indices, self.k)
@@ -31,7 +31,7 @@ class StratifiedValidation:
         folds = []
         for i in range(self.k):
             fold_indices = np.concatenate((pos_folds[i], neg_folds[i]))
-            fold_indices = np.random.permutation(fold_indices)
+            fold_indices = rng.permutation(fold_indices)
             folds.append(self.dataset[fold_indices])
         
         return folds
@@ -44,7 +44,7 @@ class Performance:
         self.recall = -1
     
     def get_accuracy(self):
-        return np.sum(self.preds == self.y.to_numpy())/self.y.shape[0]
+        return np.sum(self.preds == self.y)/self.y.shape[0]
     
     def get_precision(self):
         _, preds_counts = np.unique(self.preds, return_counts=True)
